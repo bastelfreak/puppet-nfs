@@ -3,6 +3,60 @@
 require 'spec_helper'
 
 describe 'nfs' do
+  on_supported_os.each do |os, os_facts|
+    context "on #{os}" do
+      let(:facts) { os_facts }
+
+      case os_facts[:os]['name']
+      when 'Debian', 'Ubuntu'
+        server_packages = %w[nfs-common nfs-kernel-server nfs4-acl-tools rpcbind]
+      when 'RedHat', 'CentOS', 'Rocky', 'AlmaLinux'
+        server_packages = %w[nfs-utils nfs4-acl-tools rpcbind]
+      when 'Archlinux'
+        server_packages = %w[nfs-utils]
+      when 'SLES'
+        server_packages = %w[nfs-kernel-server]
+      when 'Gentoo'
+        server_packages = %w[net-nds/rpcbind net-fs/nfs-utils net-libs/libnfsidmap]
+      end
+
+      context 'with defaults' do
+        it { is_expected.to compile.with_all_deps }
+      end
+
+      context 'when server_enabled => true, client_enabled => false' do
+        let(:params) { { server_enabled: true, client_enabled: false } }
+
+        it { is_expected.to contain_class('nfs::server::config') }
+        it { is_expected.to contain_class('nfs::server::package') }
+        it { is_expected.to contain_class('nfs::server::service') }
+        it { is_expected.to contain_concat__fragment('nfs_exports_header').with('target' => '/etc/exports') }
+
+        server_packages.each do |package|
+          context os do
+            it { is_expected.to contain_package(package) }
+          end
+        end
+
+        context 'when nfs_v4 => true' do
+          let(:params) { { nfs_v4: true, server_enabled: true, client_enabled: false, nfs_v4_idmap_domain: 'teststring' } }
+
+          it { is_expected.to contain_concat__fragment('nfs_exports_root').with('target' => '/etc/exports') }
+          it { is_expected.to contain_file('/export').with('ensure' => 'directory') }
+          it { is_expected.to contain_augeas('/etc/idmapd.conf').with_changes(%r{set General/Domain teststring}) }
+
+          context os do
+            if server_servicehelpers != ''
+              server_servicehelpers.each do |server_servicehelper|
+                it { is_expected.to contain_service(server_servicehelper).with('ensure' => 'running').with_subscribe(['Concat[/etc/exports]', 'Augeas[/etc/idmapd.conf]']) }
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
   # supported_os = %w[Ubuntu_default Ubuntu_16.04 Debian_default Debian_8 RedHat_default RedHat_7 RedHat_75 RedHat_8 Gentoo SLES Archlinux]
   supported_os = %w[Ubuntu_20.04 Ubuntu_22.04 Debian_11 RedHat_default RedHat_7 RedHat_75 RedHat_8 Gentoo SLES]
   supported_os.each do |os|
@@ -385,39 +439,6 @@ describe 'nfs' do
 
       end
       ### ^^ Switch Case to set OS specific values ^^ ###
-
-      it { is_expected.to compile.with_all_deps }
-
-      context 'when server_enabled => true, client_enabled => false' do
-        let(:params) { { server_enabled: true, client_enabled: false } }
-
-        it { is_expected.to contain_class('nfs::server::config') }
-        it { is_expected.to contain_class('nfs::server::package') }
-        it { is_expected.to contain_class('nfs::server::service') }
-        it { is_expected.to contain_concat__fragment('nfs_exports_header').with('target' => '/etc/exports') }
-
-        server_packages.each do |package|
-          context os do
-            it { is_expected.to contain_package(package) }
-          end
-        end
-
-        context 'when nfs_v4 => true' do
-          let(:params) { { nfs_v4: true, server_enabled: true, client_enabled: false, nfs_v4_idmap_domain: 'teststring' } }
-
-          it { is_expected.to contain_concat__fragment('nfs_exports_root').with('target' => '/etc/exports') }
-          it { is_expected.to contain_file('/export').with('ensure' => 'directory') }
-          it { is_expected.to contain_augeas('/etc/idmapd.conf').with_changes(%r{set General/Domain teststring}) }
-
-          context os do
-            if server_servicehelpers != ''
-              server_servicehelpers.each do |server_servicehelper|
-                it { is_expected.to contain_service(server_servicehelper).with('ensure' => 'running').with_subscribe(['Concat[/etc/exports]', 'Augeas[/etc/idmapd.conf]']) }
-              end
-            end
-          end
-        end
-      end
 
       context 'when server_enabled => false, client_enabled => true' do
         let(:params) { { server_enabled: false, client_enabled: true } }
